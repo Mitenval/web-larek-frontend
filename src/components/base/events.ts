@@ -1,10 +1,9 @@
-// Хорошая практика даже простые типы выносить в алиасы
-// Зато когда захотите поменять это достаточно сделать в одном месте
+// Типы лучше выносить отдельно — удобнее масштабировать
 type EventName = string | RegExp;
-type Subscriber = Function;
+type Subscriber = (...args: any[]) => void;
 type EmitterEvent = {
-    eventName: string,
-    data: unknown
+    eventName: string;
+    data: unknown;
 };
 
 export interface IEvents {
@@ -14,78 +13,77 @@ export interface IEvents {
 }
 
 /**
- * Брокер событий, классическая реализация
- * В расширенных вариантах есть возможность подписаться на все события
- * или слушать события по шаблону например
+ * Класс EventEmitter — простая реализация паттерна наблюдателя.
  */
 export class EventEmitter implements IEvents {
-    _events: Map<EventName, Set<Subscriber>>;
-
-    constructor() {
-        this._events = new Map<EventName, Set<Subscriber>>();
-    }
+    private readonly _events = new Map<EventName, Set<Subscriber>>();
 
     /**
-     * Установить обработчик на событие
+     * Добавляет обработчика на событие
      */
-    on<T extends object>(eventName: EventName, callback: (event: T) => void) {
-        if (!this._events.has(eventName)) {
-            this._events.set(eventName, new Set<Subscriber>());
+    on<T extends object>(event: EventName, callback: (data: T) => void): void {
+        if (!this._events.has(event)) {
+            this._events.set(event, new Set());
         }
-        this._events.get(eventName)?.add(callback);
+        this._events.get(event)?.add(callback);
     }
 
     /**
-     * Снять обработчик с события
+     * Удаляет обработчика с события
      */
-    off(eventName: EventName, callback: Subscriber) {
-        if (this._events.has(eventName)) {
-            this._events.get(eventName)!.delete(callback);
-            if (this._events.get(eventName)?.size === 0) {
-                this._events.delete(eventName);
+    off(event: EventName, callback: Subscriber): void {
+        const subs = this._events.get(event);
+        if (!subs) return;
+
+        subs.delete(callback);
+
+        if (subs.size === 0) {
+            this._events.delete(event);
+        }
+    }
+
+    /**
+     * Вызывает обработчики события
+     */
+    emit<T extends object>(event: string, payload?: T): void {
+        for (const [name, handlers] of this._events.entries()) {
+            const match =
+              (typeof name === 'string' && name === event) ||
+              (name instanceof RegExp && name.test(event)) ||
+              name === '*';
+
+            if (!match) continue;
+
+            for (const handler of handlers) {
+                if (name === '*') {
+                    handler({ eventName: event, data: payload });
+                } else {
+                    handler(payload);
+                }
             }
         }
     }
 
     /**
-     * Инициировать событие с данными
+     * Добавляет обработчика на все события
      */
-    emit<T extends object>(eventName: string, data?: T) {
-        this._events.forEach((subscribers, name) => {
-            if (name === '*') subscribers.forEach(callback => callback({
-                eventName,
-                data
-            }));
-            if (name instanceof RegExp && name.test(eventName) || name === eventName) {
-                subscribers.forEach(callback => callback(data));
-            }
-        });
+    onAll(callback: (evt: EmitterEvent) => void): void {
+        this.on('*', callback);
     }
 
     /**
-     * Слушать все события
+     * Удаляет все обработчики
      */
-    onAll(callback: (event: EmitterEvent) => void) {
-        this.on("*", callback);
+    offAll(): void {
+        this._events.clear();
     }
 
     /**
-     * Сбросить все обработчики
+     * Генерирует коллбек, инициирующий событие
      */
-    offAll() {
-        this._events = new Map<string, Set<Subscriber>>();
-    }
-
-    /**
-     * Сделать коллбек триггер, генерирующий событие при вызове
-     */
-    trigger<T extends object>(eventName: string, context?: Partial<T>) {
-        return (event: object = {}) => {
-            this.emit(eventName, {
-                ...(event || {}),
-                ...(context || {})
-            });
+    trigger<T extends object>(event: string, context?: Partial<T>): (data: T) => void {
+        return (data: T = {} as T) => {
+            this.emit(event, { ...context, ...data });
         };
     }
 }
-
